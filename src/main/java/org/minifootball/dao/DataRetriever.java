@@ -24,7 +24,7 @@ public class DataRetriever {
             """;
 
         final String playersSql = """
-            SELECT id, name, age, position
+            SELECT id, name, age, position, goal_nb
             FROM player
             WHERE id_team = ?
             """;
@@ -46,15 +46,14 @@ public class DataRetriever {
                         );
                     } else {
                         System.out.println("Team id : " + id + " not found ! ");
+                        return null;
                     }
                 }
             }
 
             List<Player> players = new ArrayList<>();
-
             try (PreparedStatement playersPs = conn.prepareStatement(playersSql)) {
                 playersPs.setInt(1, id);
-
                 try (ResultSet rs = playersPs.executeQuery()) {
                     while (rs.next()) {
                         Player player = new Player(
@@ -62,19 +61,19 @@ public class DataRetriever {
                                 rs.getString("name"),
                                 rs.getInt("age"),
                                 PlayerPositionEnum.valueOf(rs.getString("position")),
-                                team
+                                team,
+                                rs.getObject("goal_nb") != null ? rs.getInt("goal_nb") : null
                         );
                         players.add(player);
                     }
                 }
             }
-            if (team != null) {
-                team.setPlayers(players);
-            }
+
+            team.setPlayers(players);
+
         } catch (SQLException e) {
             e.printStackTrace();
         }
-
         return team;
     }
 
@@ -82,7 +81,6 @@ public class DataRetriever {
         if (page < 1 || size < 1) {
             throw new IllegalArgumentException("Page and size must be positive");
         }
-
         int offset = (page - 1) * size;
 
         final String sql = """
@@ -91,6 +89,7 @@ public class DataRetriever {
                 p.name AS player_name,
                 p.age,
                 p.position,
+                p.goal_nb,
                 t.id AS team_id,
                 t.name AS team_name,
                 t.continent
@@ -101,12 +100,12 @@ public class DataRetriever {
             """;
 
         List<Player> players = new ArrayList<>();
-
         try (Connection conn = DBConnection.getDBConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
 
             ps.setInt(1, size);
             ps.setInt(2, offset);
+
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     Team team = null;
@@ -116,15 +115,17 @@ public class DataRetriever {
                                 teamId,
                                 rs.getString("team_name"),
                                 ContinentEnum.valueOf(rs.getString("continent")),
-                                null
+                                new ArrayList<>()
                         );
                     }
+
                     Player player = new Player(
                             rs.getInt("player_id"),
                             rs.getString("player_name"),
                             rs.getInt("age"),
                             PlayerPositionEnum.valueOf(rs.getString("position")),
-                            team
+                            team,
+                            rs.getObject("goal_nb") != null ? rs.getInt("goal_nb") : null
                     );
                     players.add(player);
                 }
@@ -139,8 +140,13 @@ public class DataRetriever {
         if (newPlayers == null || newPlayers.isEmpty()) {
             return List.of();
         }
+
         final String checkNameExists = "SELECT 1 FROM player WHERE name = ? LIMIT 1";
-        final String insertPlayer = "INSERT INTO player (name, age, position, id_team) VALUES (?, ?, ?::player_position, ?)";
+        final String insertPlayer = """
+            INSERT INTO player (name, age, position, id_team, goal_nb)
+            VALUES (?, ?, ?::player_position, ?, ?)
+            """;
+
         List<Player> created = new ArrayList<>();
         try (Connection conn = DBConnection.getDBConnection()) {
             conn.setAutoCommit(false);
@@ -162,7 +168,10 @@ public class DataRetriever {
                         psInsert.setString(3, p.getPosition().name());
                         Integer teamId = (p.getTeam() != null) ? p.getTeam().getId() : null;
                         psInsert.setObject(4, teamId);
+                        psInsert.setObject(5, p.getGoal_nb());
+
                         psInsert.executeUpdate();
+
                         try (ResultSet keys = psInsert.getGeneratedKeys()) {
                             if (keys.next()) {
                                 p.setId(keys.getInt(1));
@@ -171,6 +180,7 @@ public class DataRetriever {
                         created.add(p);
                     }
                 }
+
                 conn.commit();
             } catch (Exception e) {
                 conn.rollback();
@@ -186,13 +196,16 @@ public class DataRetriever {
         if (team == null || team.getName() == null || team.getName().isBlank()) {
             throw new IllegalArgumentException("Team and its name are required");
         }
+
         final String insertTeam = "INSERT INTO team (name, continent) VALUES (?, ?::continent_enum)";
         final String updateTeam = "UPDATE team SET name = ?, continent = ?::continent_enum WHERE id = ?";
-        final String associatePlayer = "UPDATE player SET id_team = ? WHERE id = ? AND id_team IS DISTINCT FROM ?";
+        final String associatePlayer = "UPDATE player SET id_team = ? WHERE id = ?";
+
         try (Connection conn = DBConnection.getDBConnection()) {
             conn.setAutoCommit(false);
             try {
                 Integer teamId = team.getId();
+
                 if (teamId == null) {
                     try (PreparedStatement ps = conn.prepareStatement(insertTeam, Statement.RETURN_GENERATED_KEYS)) {
                         ps.setString(1, team.getName());
@@ -217,10 +230,10 @@ public class DataRetriever {
                     }
                 }
 
-                List<Player> players = team.getPlayers();
-                if (players == null) {
-                    players = new ArrayList<>();
-                }
+
+                List<Player> players = team.getPlayers() != null ? team.getPlayers() : new ArrayList<>();
+
+
                 if (players.isEmpty()) {
                     try (PreparedStatement ps = conn.prepareStatement("UPDATE player SET id_team = NULL WHERE id_team = ?")) {
                         ps.setInt(1, teamId);
@@ -248,13 +261,13 @@ public class DataRetriever {
                         for (Player p : players) {
                             ps.setInt(1, teamId);
                             ps.setInt(2, p.getId());
-                            ps.setInt(3, teamId);
                             ps.addBatch();
                             p.setTeam(team);
                         }
                         ps.executeBatch();
                     }
                 }
+
                 conn.commit();
             } catch (Exception e) {
                 conn.rollback();
@@ -271,14 +284,17 @@ public class DataRetriever {
         if (playerName == null || playerName.isBlank()) {
             return teams;
         }
+
         final String sql = """
             SELECT DISTINCT t.id, t.name, t.continent
             FROM team t
             JOIN player p ON p.id_team = t.id
             WHERE p.name ILIKE ?
             """;
+
         try (Connection conn = DBConnection.getDBConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
+
             ps.setString(1, "%" + playerName + "%");
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
@@ -286,7 +302,7 @@ public class DataRetriever {
                             rs.getInt("id"),
                             rs.getString("name"),
                             ContinentEnum.valueOf(rs.getString("continent")),
-                            null
+                            new ArrayList<>()
                     );
                     teams.add(team);
                 }
@@ -297,7 +313,9 @@ public class DataRetriever {
         return teams;
     }
 
-    public List<Player> findPlayersByCriteria(String playerName, PlayerPositionEnum position, String teamName, ContinentEnum continent, int page, int size) {
+    public List<Player> findPlayersByCriteria(String playerName, PlayerPositionEnum position,
+                                              String teamName, ContinentEnum continent,
+                                              int page, int size) {
         if (page < 1 || size < 1) {
             throw new IllegalArgumentException("Page and size must be positive");
         }
@@ -309,6 +327,7 @@ public class DataRetriever {
                 p.name AS player_name,
                 p.age,
                 p.position,
+                p.goal_nb,
                 t.id AS team_id,
                 t.name AS team_name,
                 t.continent
@@ -343,9 +362,11 @@ public class DataRetriever {
         List<Player> players = new ArrayList<>();
         try (Connection conn = DBConnection.getDBConnection();
              PreparedStatement ps = conn.prepareStatement(sql.toString())) {
+
             for (int i = 0; i < params.size(); i++) {
                 ps.setObject(i + 1, params.get(i));
             }
+
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     Team team = null;
@@ -355,7 +376,7 @@ public class DataRetriever {
                                 teamId,
                                 rs.getString("team_name"),
                                 ContinentEnum.valueOf(rs.getString("continent")),
-                                null
+                                new ArrayList<>()
                         );
                     }
 
@@ -364,16 +385,15 @@ public class DataRetriever {
                             rs.getString("player_name"),
                             rs.getInt("age"),
                             PlayerPositionEnum.valueOf(rs.getString("position")),
-                            team
+                            team,
+                            rs.getObject("goal_nb") != null ? rs.getInt("goal_nb") : null
                     );
                     players.add(player);
                 }
             }
-
         } catch (SQLException e) {
             e.printStackTrace();
         }
-
         return players;
     }
 }

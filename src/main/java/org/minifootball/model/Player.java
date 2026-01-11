@@ -8,13 +8,20 @@ public class Player {
     private int age;
     private PlayerPositionEnum position;
     private Team team;
+    private Integer goal_nb;
 
-    public Player(int id, String name, int age, PlayerPositionEnum position, Team team) {
+    public Player(int id, String name, int age, PlayerPositionEnum position, Team team, Integer goal_nb) {
         this.id = id;
         this.name = name;
         this.age = age;
         this.position = position;
         this.team = team;
+        this.goal_nb = goal_nb;
+    }
+
+
+    public Player(int id, String name, int age, PlayerPositionEnum position, Team team) {
+        this(id, name, age, position, team, null);
     }
 
     public int getId() {
@@ -57,16 +64,30 @@ public class Player {
         this.team = team;
     }
 
+    public Integer getGoal_nb() {
+        return goal_nb;
+    }
+
+    public void setGoal_nb(Integer goal_nb) {
+        this.goal_nb = goal_nb;
+    }
+
     @Override
     public boolean equals(Object o) {
+        if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
         Player player = (Player) o;
-        return id == player.id && age == player.age && Objects.equals(name, player.name) && position == player.position && Objects.equals(team, player.team);
+        return id == player.id &&
+                age == player.age &&
+                Objects.equals(name, player.name) &&
+                position == player.position &&
+                Objects.equals(team, player.team) &&
+                Objects.equals(goal_nb, player.goal_nb);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(id);
+        return Objects.hash(id, name, age, position, team, goal_nb);
     }
 
     @Override
@@ -76,10 +97,8 @@ public class Player {
                 ", name='" + name + '\'' +
                 ", age=" + age +
                 ", position=" + position +
-                ", team=" + team +
+                ", team=" + (team != null ? team.getName() : "null") +
+                ", goal_nb=" + goal_nb +
                 '}';
     }
 }
-
-
-
